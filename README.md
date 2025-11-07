@@ -4,8 +4,8 @@
 
 The pipeline is powered by Omnipin, uploads files to a Filecoin service provider, and uses Safe to propose ENS updates to a multi-sig wallet automatically.
 
-✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨
+✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨
 
 **[Releases](https://github.com/5afe/safe-wallet-ipfs/releases)**
 
-✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨
+✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨
