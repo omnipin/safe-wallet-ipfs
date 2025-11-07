@@ -78,8 +78,8 @@ jobs:
           echo "$output" >> $GITHUB_STEP_SUMMARY
         env:
           OMNIPIN_FILECOIN_TOKEN: ${{ secrets.OMNIPIN_FILECOIN_TOKEN }}
-          OMNIPIN_FILECOIN_SP_URL: "https://calibration-pdp.infrafolio.com"
-          OMNIPIN_FILECOIN_SP_ADDRESS: "0xCb9e86945cA31E6C3120725BF0385CBAD684040c"
+          OMNIPIN_FILECOIN_SP_URL: "https://pdp-calib.filweb3.com"
+          OMNIPIN_FILECOIN_SP_ADDRESS: "0x3bD99eAe098aB0553C88Ee669042A30ec55fF6B4"
           OMNIPIN_PK: ${{ secrets.OMNIPIN_PK }}
 
       - name: Create Release in This Repo
