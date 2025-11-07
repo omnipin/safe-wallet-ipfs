@@ -78,8 +78,8 @@ jobs:
           echo "$output" >> $GITHUB_STEP_SUMMARY
         env:
           OMNIPIN_FILECOIN_TOKEN: ${{ secrets.OMNIPIN_FILECOIN_TOKEN }}
-          OMNIPIN_FILECOIN_SP_URL: "https://calib2.ezpdpz.net"
-          OMNIPIN_FILECOIN_SP_ADDRESS: "0xbCdf1bdc1a97D071a5a8EF03F1F05225b6E2a1Ba"
+          OMNIPIN_FILECOIN_SP_URL: "http://warp.lotus.dedyn.io:9555"
+          OMNIPIN_FILECOIN_SP_ADDRESS: "0xCb9e86945cA31E6C3120725BF0385CBAD684040c"
           OMNIPIN_PK: ${{ secrets.OMNIPIN_PK }}
 
       - name: Create Release in This Repo
