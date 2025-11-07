@@ -2,6 +2,9 @@ name: Safe-Wallet-Monorepo Web Release on IPFS (Always Deploy Latest)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   deploy:
@@ -42,62 +45,32 @@ jobs:
           mkdir -p /tmp/release
           tar -xzf /tmp/release.tar.gz -C /tmp/release
 
-      - name: Find build directory structure
-        id: find_build
+      - name: Verify build directory
         run: |
-          # List the structure to debug
-          echo "Current directory structure:"
-          find /tmp/release -type f -name "*.html" | head -20
-
-          # Try to find the actual build directory
-          BUILD_DIR=$(find /tmp/release -name "index.html" -type f | head -1 | xargs dirname 2>/dev/null || echo "")
-          if [ -n "$BUILD_DIR" ]; then
-            echo "Found build directory: $BUILD_DIR"
-            echo "build_dir=$BUILD_DIR" >> $GITHUB_OUTPUT
-          else
-            # Fallback: check common directories
-            if [ -d "/tmp/release/apps/wallet/out" ]; then
-              echo "build_dir=/tmp/release/apps/wallet/out" >> $GITHUB_OUTPUT
-            elif [ -d "/tmp/release/out" ]; then
-              echo "build_dir=/tmp/release/out" >> $GITHUB_OUTPUT
-            elif [ -d "/tmp/release/dist" ]; then
-              echo "build_dir=/tmp/release/dist" >> $GITHUB_OUTPUT
-            elif [ -d "/tmp/release/build" ]; then
-              echo "build_dir=/tmp/release/build" >> $GITHUB_OUTPUT
-            else
-              echo "❌ Could not find build directory"
-              find /tmp/release -type d | head -20
-              exit 1
-            fi
-          fi
-
-      - name: Optional — Rewrite .html to clean URLs
-        run: |
-          find "${{ steps.find_build.outputs.build_dir }}" -name '*.html' | while read file; do
-            clean="${file%.html}"
-            mkdir -p "$(dirname "$clean")"
-            cp "$file" "$clean"
-          done
-
-      - name: Deploy to Filecoin via Omnipin
-        id: deploy_ipfs
-        run: |
-          BUILD_DIR="${{ steps.find_build.outputs.build_dir }}"
-
-          # Ensure the build folder exists
-          if [ ! -d "$BUILD_DIR" ]; then
-            echo "❌ Build directory not found: $BUILD_DIR"
-            echo "Available directories in /tmp/release:"
+          if [ ! -d "/tmp/release/out" ]; then
+            echo "❌ Build directory not found"
             find /tmp/release -type d | head -20
             exit 1
           fi
 
-          echo "Deploying from: $BUILD_DIR"
-          echo "Contents of build directory:"
-          ls -la "$BUILD_DIR" | head -10
+          if [ ! -f "/tmp/release/out/index.html" ]; then
+            echo "❌ index.html not found in build directory"
+            ls -la "/tmp/release/out" | head -10
+            exit 1
+          fi
 
-          # Deploy
-          output=$(npx omnipin deploy "$BUILD_DIR" --filecoin-chain calibration --ens safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
+          echo "✅ Build directory verified"
+
+      - name: Deploy to Filecoin via Omnipin (using relative paths)
+        id: deploy_ipfs
+        run: |
+          cd /tmp/release/out
+          echo "Current directory: $(pwd)"
+          echo "Directory contents:"
+          ls -la | head -10
+
+          # Deploy from current directory using relative path
+          output=$(npx omnipin deploy . --filecoin-chain calibration --ens safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
           echo "$output"
           cid=$(echo "$output" | awk '/Root CID:/ {print $NF}')
           [ -n "$cid" ] || (echo "CID not found!" && exit 1)
