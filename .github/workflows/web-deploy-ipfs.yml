@@ -70,7 +70,7 @@ jobs:
           ls -la | head -10
 
           # Deploy from current directory using relative path
-          output=$(npx omnipin deploy . --filecoin-chain calibration --ens safe.filpay.eth --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
+          output=$(npx omnipin deploy . --filecoin-chain calibration --ens safe.filpay.eth --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028 --strict)
           echo "$output"
           cid=$(echo "$output" | awk '/Root CID:/ {print $NF}')
           [ -n "$cid" ] || (echo "CID not found!" && exit 1)
