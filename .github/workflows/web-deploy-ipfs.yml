@@ -138,7 +138,7 @@ jobs:
       - name: Deploy on Filecoin with Omnipin
         id: deploy_ipfs
         run: |
-          output=$(npx omnipin deploy /tmp/release/out --filecoin-chain calibration --ens https://safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
+          output=$(npx omnipin deploy /tmp/release/out --filecoin-chain calibration --ens safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
           echo "$output"
           cid=$(echo "$output" | awk '/Root CID:/ {print $NF}')
           if [ -z "$cid" ]; then
