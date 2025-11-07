@@ -53,7 +53,18 @@ jobs:
       - name: Deploy to Filecoin via Omnipin
         id: deploy_ipfs
         run: |
-          output=$(npx omnipin deploy /tmp/release/out --filecoin-chain calibration --ens safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
+          # Find the top-level folder inside /tmp/release
+          TOPDIR=$(find /tmp/release -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          echo "Using top-level folder: $TOPDIR"
+
+          # Ensure the out folder exists
+          if [ ! -d "$TOPDIR/out" ]; then
+            echo "❌ /out folder not found in $TOPDIR"
+            exit 1
+          fi
+
+          # Deploy
+          output=$(npx omnipin deploy "$TOPDIR/out" --filecoin-chain calibration --ens safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
           echo "$output"
           cid=$(echo "$output" | awk '/Root CID:/ {print $NF}')
           [ -n "$cid" ] || (echo "CID not found!" && exit 1)
