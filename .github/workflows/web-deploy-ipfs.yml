@@ -42,22 +42,6 @@ jobs:
           mkdir -p /tmp/release
           tar -xzf /tmp/release.tar.gz -C /tmp/release
 
-      - name: Locate Safe Web Build Output
-        id: locate_build
-        run: |
-          ROOT=/tmp/release
-          BUILD=$(find $ROOT -type d \( -path "*/apps/web/build" -o -path "*/packages/web/build" \) | head -n 1)
-
-          if [ -z "$BUILD" ]; then
-            echo "❌ Could not locate frontend build output"
-            echo "Directory structure:"
-            find $ROOT -maxdepth 4 -type d
-            exit 1
-          fi
-
-          echo "✅ Found build at: $BUILD"
-          ln -s "$BUILD" /tmp/release/out
-
       - name: Optional — Rewrite .html to clean URLs
         run: |
           find /tmp/release/out -name '*.html' | while read file; do
