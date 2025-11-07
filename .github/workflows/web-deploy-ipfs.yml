@@ -1,4 +1,4 @@
-name: Safe-Wallet-Monorepo Web Release on IPFS
+name: Safe-Wallet-Monorepo Web Release on IPFS (Always Deploy Latest)
 
 on:
   workflow_dispatch:
@@ -8,15 +8,11 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy Latest Safe Frontend to IPFS
 
-    outputs:
-      cid: ${{ steps.deploy_ipfs.outputs.cid }}
-      latest_tag: ${{ steps.latest_release_info.outputs.latest_tag }}
-
     permissions:
       contents: write
-      statuses: write
       checks: write
       pull-requests: write
+      statuses: write
 
     steps:
       - name: Get latest release info
@@ -26,42 +22,59 @@ jobs:
           TAG_NAME=$(echo "$RELEASE_INFO" | jq -r '.tag_name')
           TAR_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
           CHECKSUM_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | endswith("-sha256-checksum.txt")) | .browser_download_url')
-
           echo "latest_tag=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "tar_url=$TAR_URL" >> $GITHUB_OUTPUT
           echo "checksum_url=$CHECKSUM_URL" >> $GITHUB_OUTPUT
 
-      - name: Download Tarball and Checksum
+      - name: Download Release Tarball + Checksum
         run: |
           curl -L "${{ steps.latest_release_info.outputs.tar_url }}" -o /tmp/release.tar.gz
           curl -L "${{ steps.latest_release_info.outputs.checksum_url }}" -o /tmp/checksum.txt
 
       - name: Verify Checksum
         run: |
-          CHECKSUM_EXPECTED=$(awk '{print $1}' /tmp/checksum.txt)
-          CHECKSUM_ACTUAL=$(sha256sum /tmp/release.tar.gz | awk '{print $1}')
-          [ "$CHECKSUM_EXPECTED" == "$CHECKSUM_ACTUAL" ] || (echo "Checksum mismatch!" && exit 1)
+          EXPECTED=$(awk '{print $1}' /tmp/checksum.txt)
+          ACTUAL=$(sha256sum /tmp/release.tar.gz | awk '{print $1}')
+          [ "$EXPECTED" = "$ACTUAL" ] || (echo "Checksum mismatch!" && exit 1)
 
       - name: Extract Tarball
         run: |
           mkdir -p /tmp/release
           tar -xzf /tmp/release.tar.gz -C /tmp/release
 
-      - name: Remove .html extension from all files (clean URLs)
+      - name: Locate Safe Web Build Output
+        id: locate_build
+        run: |
+          ROOT=/tmp/release
+          BUILD=$(find $ROOT -type d \( -path "*/apps/web/build" -o -path "*/packages/web/build" \) | head -n 1)
+
+          if [ -z "$BUILD" ]; then
+            echo "❌ Could not locate frontend build output"
+            echo "Directory structure:"
+            find $ROOT -maxdepth 4 -type d
+            exit 1
+          fi
+
+          echo "✅ Found build at: $BUILD"
+          ln -s "$BUILD" /tmp/release/out
+
+      - name: Optional — Rewrite .html to clean URLs
         run: |
           find /tmp/release/out -name '*.html' | while read file; do
-            target="${file%.html}"
-            mkdir -p "$(dirname "$target")"
-            cp "$file" "$target"
+            clean="${file%.html}"
+            mkdir -p "$(dirname "$clean")"
+            cp "$file" "$clean"
           done
 
-      - name: Deploy on Filecoin with Omnipin
+      - name: Deploy to Filecoin via Omnipin
         id: deploy_ipfs
         run: |
           output=$(npx omnipin deploy /tmp/release/out --filecoin-chain calibration --ens safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
           echo "$output"
           cid=$(echo "$output" | awk '/Root CID:/ {print $NF}')
+          [ -n "$cid" ] || (echo "CID not found!" && exit 1)
           echo "cid=$cid" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_STEP_SUMMARY
         env:
           OMNIPIN_FILECOIN_TOKEN: ${{ secrets.OMNIPIN_FILECOIN_TOKEN }}
           OMNIPIN_FILECOIN_SP_URL: "https://calibration-pdp.infrafolio.com"
@@ -77,13 +90,12 @@ jobs:
           release_name: safe-wallet-monorepo ${{ steps.latest_release_info.outputs.latest_tag }}
           body: |
             - 🧩 Version: `${{ steps.latest_release_info.outputs.latest_tag }}`
-            - 📦 Source Release: https://github.com/safe-global/safe-wallet-monorepo/releases/tag/${{ steps.latest_release_info.outputs.latest_tag }}
+            - 📦 Source: https://github.com/safe-global/safe-wallet-monorepo/releases/tag/${{ steps.latest_release_info.outputs.latest_tag }}
             - 🔏 CID: `${{ steps.deploy_ipfs.outputs.cid }}`
-            - 🌍 Preview:
+            - 🌍 Gateways:
               - https://${{ steps.deploy_ipfs.outputs.cid }}.ipfs.dweb.link/
               - https://${{ steps.deploy_ipfs.outputs.cid }}.ipfs.w3s.link/
               - https://${{ steps.deploy_ipfs.outputs.cid }}.ipfs.inbrowser.link/
 
       - name: Cleanup
-        run: |
-          rm -rf /tmp/release /tmp/checksum.txt /tmp/release.tar.gz
+        run: rm -rf /tmp/release /tmp/checksum.txt /tmp/release.tar.gz
