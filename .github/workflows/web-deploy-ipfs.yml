@@ -2,8 +2,6 @@
 name: Safe-Wallet-Monorepo Web Release on IPFS
 
 on:
-  schedule:
-    - cron: "0 * * * *" # Runs every hour
   workflow_dispatch: # Allows manual triggering
 
 jobs:
@@ -137,15 +135,23 @@ jobs:
             fi
           done
 
-      - name: Deploy to IPFS
-        uses: ipfs/ipfs-deploy-action@v1
+      - name: Deploy on Filecoin with Omnipin
         id: deploy_ipfs
-        with:
-          path-to-deploy: /tmp/release/out
-          storacha-key: ${{ secrets.STORACHA_KEY }}
-          storacha-proof: ${{ secrets.STORACHA_PROOF }}
-          pinata-jwt-token: ${{ secrets.PINATA_JWT }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          output=$(npx omnipin deploy /tmp/release/out --filecoin-chain calibration --ens https://safe.filpay.eth.limo --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028)
+          echo "$output"
+          cid=$(echo "$output" | awk '/Root CID:/ {print $NF}')
+          if [ -z "$cid" ]; then
+            echo "Error: CID not found"
+            exit 1
+          fi
+          echo "CID=$cid" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_STEP_SUMMARY
+        env:
+          OMNIPIN_FILECOIN_TOKEN: ${{ secrets.OMNIPIN_FILECOIN_TOKEN }}
+          OMNIPIN_FILECOIN_SP_URL: "https://calibration-pdp.infrafolio.com"
+          OMNIPIN_FILECOIN_SP_ADDRESS: "0xCb9e86945cA31E6C3120725BF0385CBAD684040c"
+          OMNIPIN_PK: ${{ secrets.OMNIPIN_PK }}
 
       - name: Store CID in outputs
         run: |
