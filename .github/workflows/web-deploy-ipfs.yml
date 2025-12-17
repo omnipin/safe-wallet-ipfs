@@ -1,76 +1,156 @@
-name: Safe-Wallet-Monorepo Web Release on IPFS (Always Deploy Latest)
+# This workflow is used to deploy a safe-wallet-monorepo release to IPFS
+name: Safe-Wallet-Monorepo Web Release on IPFS
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+  schedule:
+    - cron: "0 * * * *" # Runs every hour
+  workflow_dispatch: # Allows manual triggering
 
 jobs:
-  deploy:
+  ## Check if a new release of safe-wallet-monorepo is available
+  ## Outputs:
+  ## - new_release: true if a new release is available, false otherwise
+  ## - latest_tag: the tag of the latest release
+  ## - tar_url: the URL of the tarball of the latest release
+  ## - checksum_url: the URL of the checksum of the latest release
+  check-release:
     runs-on: ubuntu-latest
-    name: Deploy Latest Safe Frontend to IPFS
+    name: Check for new release
 
-    permissions:
-      contents: write
-      checks: write
-      pull-requests: write
-      statuses: write
+    outputs:
+      new_release: ${{ steps.compare.outputs.new_release }}
+      latest_tag: ${{ steps.latest_release_info.outputs.latest_tag }}
+      tar_url: ${{ steps.latest_release_info.outputs.tar_url }}
+      checksum_url: ${{ steps.latest_release_info.outputs.checksum_url }}
 
     steps:
       - name: Get latest release info
         id: latest_release_info
+        env:
+          API_URL: https://api.github.com/repos/safe-global/safe-wallet-monorepo/releases
+          MAX_ATTEMPTS: 3 ## Max number of attempts to fetch the release info
+          DELAY: 10 ## seconds
         run: |
-          RELEASE_INFO=$(curl -sSf https://api.github.com/repos/safe-global/safe-wallet-monorepo/releases/latest)
+          ## Fetch the latest release info from the GitHub API with retry logic
+          ## This is necessary because the GitHub API sometimes fails
+          ## see https://github.com/5afe/safe-wallet-ipfs/actions/runs/14427680232/job/40458689018
+          attempt=1
+          while true; do
+            echo "Attempt $attempt to fetch release info..."
+            RELEASES=$(curl -sSf "$API_URL")
+            if [ $? -eq 0 ] && echo "$RELEASES" | jq -e '. | length > 0' > /dev/null; then
+              # Filter for the latest non-draft, non-prerelease
+              RELEASE_INFO=$(echo "$RELEASES" | jq '[.[] | select(.draft == false and .prerelease == false)][0]')
+
+              # Check if we found a valid release
+              if [ "$RELEASE_INFO" != "null" ] && echo "$RELEASE_INFO" | jq -e '.assets' > /dev/null; then
+                break
+              fi
+
+              echo "No stable release found, retrying..."
+            fi
+
+            if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+              echo "Failed to fetch release info after $attempt attempts."
+              exit 1
+            fi
+
+            attempt=$((attempt + 1))
+            sleep "$DELAY"
+          done
+
+          ## Extract the tag name, tar URL, and checksum URL from the release info
           TAG_NAME=$(echo "$RELEASE_INFO" | jq -r '.tag_name')
           TAR_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
           CHECKSUM_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | endswith("-sha256-checksum.txt")) | .browser_download_url')
-          echo "latest_tag=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "tar_url=$TAR_URL" >> $GITHUB_OUTPUT
-          echo "checksum_url=$CHECKSUM_URL" >> $GITHUB_OUTPUT
 
-      - name: Download Release Tarball + Checksum
+          ## Store the tag name, tar URL, and checksum URL in the GitHub output
+          echo "latest_tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "tar_url=$TAR_URL" >> "$GITHUB_OUTPUT"
+          echo "checksum_url=$CHECKSUM_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Restore last release tag
+        id: restore-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .prev_release
+          key: latest-release-${{ steps.latest_release_info.outputs.latest_tag }}
+          restore-keys: |
+            latest-release-
+
+      - name: Compare current tag with cached release tag
+        id: compare
         run: |
-          curl -L "${{ steps.latest_release_info.outputs.tar_url }}" -o /tmp/release.tar.gz
-          curl -L "${{ steps.latest_release_info.outputs.checksum_url }}" -o /tmp/checksum.txt
+          TAG_NAME=${{ steps.latest_release_info.outputs.latest_tag }}
+          PREV_TAG_NAME=$(cat .prev_release 2>/dev/null || echo "none")
+          echo "Previous tag: $PREV_TAG_NAME"
+          echo "Current tag: $TAG_NAME"
+
+          if [ "$TAG_NAME" != "null" ] && [ "$TAG_NAME" != "$PREV_TAG_NAME" ]; then
+            echo "New release detected :: $TAG_NAME"
+            echo "new_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "No new release detected"
+            echo "new_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  ## Deploy the web app to IPFS
+  ## Outputs:
+  ## - cid: the IPFS hash (CID) of the deployed web app
+  deploy:
+    if: ${{ needs.check-release.outputs.new_release == 'true' }}
+    runs-on: ubuntu-latest
+    name: Deploy to IPFS
+    needs: check-release
+
+    outputs:
+      cid: ${{ steps.deploy_ipfs.outputs.cid }}
+
+    permissions:
+      contents: read
+      statuses: write
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Download Tarball and Checksum
+        run: |
+          curl -L "${{ needs.check-release.outputs.tar_url }}" -o /tmp/release.tar.gz  || { echo "Download failed!" >&2; exit 1; }
+          curl -L "${{ needs.check-release.outputs.checksum_url }}" -o /tmp/checksum.txt  || { echo "Download failed!" >&2; exit 1; }
 
       - name: Verify Checksum
         run: |
-          EXPECTED=$(awk '{print $1}' /tmp/checksum.txt)
-          ACTUAL=$(sha256sum /tmp/release.tar.gz | awk '{print $1}')
-          [ "$EXPECTED" = "$ACTUAL" ] || (echo "Checksum mismatch!" && exit 1)
+          CHECKSUM_EXPECTED=$(cat /tmp/checksum.txt | awk '{print $1}')
+          CHECKSUM_ACTUAL=$(sha256sum /tmp/release.tar.gz | awk '{print $1}')
+
+          if [ "$CHECKSUM_EXPECTED" != "$CHECKSUM_ACTUAL" ]; then
+            echo "Checksum verification failed!" >&2
+            exit 1
+          fi
 
       - name: Extract Tarball
         run: |
           mkdir -p /tmp/release
           tar -xzf /tmp/release.tar.gz -C /tmp/release
+          echo "Extracted files:"
+          ls -lah /tmp/release
 
-      - name: Verify build directory
+      - name: Remove .html extension from all files
         run: |
-          if [ ! -d "/tmp/release/out" ]; then
-            echo "❌ Build directory not found"
-            find /tmp/release -type d | head -20
-            exit 1
-          fi
-
-          if [ ! -f "/tmp/release/out/index.html" ]; then
-            echo "❌ index.html not found in build directory"
-            ls -la "/tmp/release/out" | head -10
-            exit 1
-          fi
-
-          echo "✅ Build directory verified"
+          for file in $(find /tmp/release/out -name '*.html' | sed 's|^\./||'); do
+            if [ -d ${file%.*} ]; then
+              cp ${file%} ${file%.*}/index.html
+            else
+              cp ${file%} ${file%.*}
+            fi
+          done
 
       - name: Deploy to Filecoin via Omnipin (using relative paths)
         id: deploy_ipfs
         run: |
           cd /tmp/release/out
-          echo "Current directory: $(pwd)"
-          echo "Directory contents:"
-          ls -la | head -10
 
-          # Deploy from current directory using relative path
-          output=$(npx omnipin deploy . --filecoin-chain calibration --ens safe.filpay.eth --safe 0xFF7C0D6234e3fAeea4c8Ba647c3C99157AFf7028 --strict)
+          output=$(npx omnipin@1.7 deploy . --ens ${{ vars.ENS_NAME }} --safe ${{ vars.SAFE_ADDRESS }} --strict)
           echo "$output"
           cid=$(echo "$output" | awk '/Root CID:/ {print $NF}')
           [ -n "$cid" ] || (echo "CID not found!" && exit 1)
@@ -78,25 +158,56 @@ jobs:
           echo "$output" >> $GITHUB_STEP_SUMMARY
         env:
           OMNIPIN_FILECOIN_TOKEN: ${{ secrets.OMNIPIN_FILECOIN_TOKEN }}
-          OMNIPIN_FILECOIN_SP_URL: "https://pdp-dev.kubuxu.com"
-          OMNIPIN_FILECOIN_SP_ADDRESS: "0x8c8c7a9BE47ed491B33B941fBc0276BD2ec25E7e"
           OMNIPIN_PK: ${{ secrets.OMNIPIN_PK }}
 
-      - name: Create Release in This Repo
+      - name: Clean up temporary files
+        run: |
+          rm -rf /tmp/release /tmp/checksum.txt /tmp/release.tar.gz
+
+  ## Create a release note
+  release_note:
+    if: ${{ needs.deploy.outputs.cid != '' }}
+    runs-on: ubuntu-latest
+    name: Create Release Note
+    needs:
+      - check-release
+      - deploy
+
+    permissions:
+      contents: write
+      statuses: write
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Create Release
+        id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.latest_release_info.outputs.latest_tag }}
-          release_name: safe-wallet-monorepo ${{ steps.latest_release_info.outputs.latest_tag }}
+          tag_name: ${{ needs.check-release.outputs.latest_tag }}
+          release_name: safe-wallet-monorepo ${{ needs.check-release.outputs.latest_tag }}
           body: |
-            - 🧩 Version: `${{ steps.latest_release_info.outputs.latest_tag }}`
-            - 📦 Source: https://github.com/safe-global/safe-wallet-monorepo/releases/tag/${{ steps.latest_release_info.outputs.latest_tag }}
-            - 🔏 CID: `${{ steps.deploy_ipfs.outputs.cid }}`
-            - 🌍 Gateways:
-              - https://${{ steps.deploy_ipfs.outputs.cid }}.ipfs.dweb.link/
-              - https://${{ steps.deploy_ipfs.outputs.cid }}.ipfs.w3s.link/
-              - https://${{ steps.deploy_ipfs.outputs.cid }}.ipfs.inbrowser.link/
+            - 🧩 Version: `${{ needs.check-release.outputs.latest_tag }}`
+            - 📦 Release link: https://github.com/safe-global/safe-wallet-monorepo/releases/tag/${{ needs.check-release.outputs.latest_tag }}
+            - 🔏 CID: `${{ needs.deploy.outputs.cid }}`
+            - 🌐 Preview:
+              - [https://${{ needs.deploy.outputs.cid }}.ipfs.dweb.link](https://${{ needs.deploy.outputs.cid }}.ipfs.dweb.link/)
+              - [https://${{ needs.deploy.outputs.cid }}.ipfs.w3s.link](https://${{ needs.deploy.outputs.cid }}.ipfs.w3s.link/)
+              - [https://${{ needs.deploy.outputs.cid }}.ipfs.inbrowser.link](https://${{ needs.deploy.outputs.cid }}.ipfs.inbrowser.link/)
+          draft: false
+          prerelease: false
 
-      - name: Cleanup
-        run: rm -rf /tmp/release /tmp/checksum.txt /tmp/release.tar.gz
+      - name: Prepare to store Last Release Tag in Cache
+        id: prepare-cache-last-release-tag
+        run: |
+          TAG_NAME=${{ needs.check-release.outputs.latest_tag }}
+          echo "$TAG_NAME" > .prev_release
+
+      - name: Cache Last Release Tag
+        id: cache-last-release-tag
+        uses: actions/cache/save@v4
+        with:
+          path: .prev_release
+          key: latest-release-${{ needs.check-release.outputs.latest_tag }}
